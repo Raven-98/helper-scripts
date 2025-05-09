@@ -1,0 +1,41 @@
+#!/bin/bash
+
+# Функція для відображення допоміжного повідомлення
+show_help() {
+    echo "Цей скрипт конвертує всі MP3 файли в директорії введення до вказаного бітрейту"
+    echo "і зберігає їх у директорії виведення."
+    echo
+    echo "Використання: $0 INPUT_DIR OUTPUT_DIR BITRATE"
+    echo
+    echo "Аргументи:"
+    echo "  INPUT_DIR  - Директорія, що містить MP3 файли для конвертації"
+    echo "  OUTPUT_DIR - Директорія, де будуть збережені конвертовані файли"
+    echo "  BITRATE    - Бажаний бітрейт для вихідних файлів (у kbps)"
+    echo
+    echo "Приклад:"
+    echo "  $0 /path/to/input /path/to/output 128"
+}
+
+# Перевірка наявності аргументу -h або --help
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    show_help
+    exit 0
+fi
+
+# Перевірка кількості аргументів
+if [ "$#" -ne 3 ]; then
+    echo "Неправильна кількість аргументів."
+    show_help
+    exit 1
+fi
+
+INPUT_DIR="$1"
+OUTPUT_DIR="$2"
+BITRATE="$3"
+
+mkdir -p "$OUTPUT_DIR"
+
+for file in "$INPUT_DIR"/*.mp3; do
+    filename=$(basename "$file")
+    ffmpeg -i "$file" -b:a "$BITRATE"k "$OUTPUT_DIR/$filename"
+done

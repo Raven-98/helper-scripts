@@ -1,0 +1,134 @@
+#!/bin/bash
+
+### Перейменування фото та відео дідповідно до їх метаданих
+
+# Перевіряємо, чи встановлено exiftool та ffmpeg
+if ! command -v exiftool &> /dev/null; then
+    echo "Помилка: exiftool не встановлено! Встановіть його за допомогою: sudo apt install libimage-exiftool-perl"
+    exit 1
+fi
+if ! command -v ffprobe &> /dev/null; then
+    echo "Помилка: ffmpeg не встановлено! Встановіть його за допомогою: sudo apt install ffmpeg"
+    exit 1
+fi
+
+# # Функція для генерації унікального ідентифікатора
+# generate_uuid() {
+#     echo "$(uuidgen | cut -c1-16)"
+# }
+
+# Обробка всіх фото та відео у поточній папці
+for file in *.jpg *.JPG *.jpeg *.JPEG *.mp4 *.MP4 *.mov *.MOV *.avi *.AVI *.mkv *.MKV *.webm *.WEBM; do
+    [[ -e "$file" ]] || continue  # Пропустити, якщо файлів немає
+
+    # Видаляємо зайві пробіли з назви файлу
+    clean_file=$(echo "$file" | tr -s ' ')
+    if [[ "$file" != "$clean_file" ]]; then
+        mv "$file" "$clean_file"
+        file="$clean_file"
+    fi
+
+    # Отримуємо дату зйомки
+    timestamp=""
+    timestamp_scr=""
+
+    case "${file##*.}" in
+        jpg|jpeg|JPG|JPEG|png|PNG)
+            timestamp=$(exiftool -DateTimeOriginal -d "%Y%m%d_%H%M%S" -S -s "$file")
+            timestamp_scr=$(exiftool -DateTimeOriginal -d "%Y-%m-%d-%H-%M-%S" -S -s "$file")
+            type="photo"
+            prefix="IMG"
+            ;;
+        mp4|mov|avi|mkv|webm|MP4|MOV|AVI|MKV|WEBM)
+            for tag in CreateDate MediaCreateDate ContentCreateDate FileModifyDate; do
+                if [[ -z "$timestamp" || "$timestamp" =~ ^0000:00:00\ 00:00:00$ ]]; then
+                    timestamp=$(exiftool -$tag -d "%Y%m%d_%H%M%S" -S -s "$file" 2>/dev/null)
+                    timestamp_scr=$(exiftool -$tag -d "%Y-%m-%d-%H-%M-%S" -S -s "$file" 2>/dev/null)
+                fi
+            done
+            # Якщо exiftool не знайшов дату, пробуємо ffprobe
+            if [[ -z "$timestamp" || "$timestamp" =~ ^0000:00:00\ 00:00:00$ ]]; then
+                timestamp=$(ffprobe -v error -select_streams v:0 -show_entries format_tags=creation_time -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null | sed 's/[-:]//g' | sed 's/ /_/g' | sed 's/\..*//')
+                timestamp_scr=$(ffprobe -v error -select_streams v:0 -show_entries format_tags=creation_time -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null | sed 's/ /-/' | sed 's/:/-/g' | sed 's/\..*//')
+            fi
+            type="video"
+            prefix="VID"
+            ;;
+        *)
+            continue
+            ;;
+    esac
+
+    # Перевірка, чи timestamp є некоректним
+    if [[ -z "$timestamp" || "$timestamp" =~ ^0000:00:00\ 00:00:00$ ]]; then
+        echo "⚠️ Файл має некоректну або відсутню дату ($file), залишаю без змін."
+        continue
+    fi
+
+    # Визначаємо, чи це скріншот або скрінкаст
+    is_screens=false
+
+    if exiftool "$file" | grep -iq "Screenshot"; then
+        is_screens=true
+    fi
+    if exiftool "$file" | grep -iq "Software.*Android"; then
+        is_screens=true
+    fi
+    if [[ "$type" == "video" ]] && exiftool "$file" | grep -iq "Screen Recorder"; then
+        is_screens=true
+    fi
+    if [[ "$type" == "video" ]]; then
+        audio_channels=$(ffprobe -v error -select_streams a:0 -show_entries stream=channels -of csv=p=0 "$file")
+        if [[ "$audio_channels" == "1" ]]; then
+            is_screens=true
+        fi
+    fi
+
+    # Формуємо нову назву файлу
+    extension="${file##*.}"
+    extension="${extension,,}"  # Перетворюємо розширення на нижній регістр
+
+    if [[ "$is_screens" == true ]]; then
+#         uuid=$(generate_uuid)
+        if [[ "$type" == "photo" ]]; then
+#             newname="Screenshot_${timestamp_scr}_${uuid}.${extension}"
+#         else
+#             newname="Record_${timestamp_scr}_${uuid}.${extension}"
+            newname="Screenshot_${timestamp_scr}.${extension}"
+        else
+            newname="Record_${timestamp_scr}.${extension}"
+        fi
+    elif [[ -n "$timestamp" ]]; then
+        newname="${prefix}_${timestamp}.${extension}"
+
+        # Якщо назва вже правильна, пропускаємо
+        if [[ "$file" == "$newname" ]]; then
+            echo "✅ Пропущено: $file (назва відповідає EXIF-даті)"
+            continue
+        fi
+    else
+        # Якщо немає метаданих
+        newname="error_${file}"
+    fi
+
+    # Додаємо суфікс, якщо файл вже існує
+    if [[ -e "$newname" ]]; then
+        counter=1
+        base_name="${newname%.*}"
+        while [[ -e "${base_name}_$counter.${extension}" ]]; do
+            ((counter++))
+        done
+        newname="${base_name}_$counter.${extension}"
+    fi
+
+    # Перейменовуємо файл
+    # Пропуск файлів із "error" у назві
+    if [[ "$file" == *error* && "$newname" == *error* ]]; then
+        echo "⚠️ Пропущено (мітка error): $file"
+    elif [[ "$file" != "$newname" ]]; then
+        mv "$file" "$newname"
+        echo "✅ Перейменовано: $file → $newname"
+    else
+        echo "✅ Пропущено: $file (назва вже правильна)"
+    fi
+done

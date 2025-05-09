@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+
+import os
+import shutil
+import imagehash
+import cv2
+from PIL import Image, ExifTags, UnidentifiedImageError
+import numpy as np
+
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".bmp", ".gif"}
+SIMILARITY_THRESHOLD = 5  # Чим менше число, тим суворіше порівняння
+BACKUP_FOLDER = "duplicates_backup"
+corrupted_folder = "corrupted_images"
+damaged_folder = "damaged_images"
+
+
+def get_image_hash(image_path):
+    try:
+        with Image.open(image_path) as img:
+            return imagehash.average_hash(img)
+    except Exception as e:
+        print(f"❌ Помилка обробки {os.path.basename(image_path)}: {e}")
+        return None
+
+def get_exif_datetime(image_path):
+    try:
+        with Image.open(image_path) as img:
+            exif_data = img._getexif()
+            if exif_data:
+                for tag, value in exif_data.items():
+                    tag_name = ExifTags.TAGS.get(tag, tag)
+                    if tag_name == "DateTimeOriginal":
+                        return value
+        return None
+    except Exception as e:
+        print(f"❌ Помилка зчитування EXIF {os.path.basename(image_path)}: {e}")
+        return None
+
+def scan_images(directory):
+    images = []
+    for file in os.listdir(directory):
+        file_path = os.path.join(directory, file)
+        if os.path.isfile(file_path) and os.path.splitext(file)[1].lower() in ALLOWED_EXTENSIONS:
+            images.append(file_path)
+    return images
+
+def find_duplicates(image_folder):
+    hashes = {}
+    duplicate_groups = {}
+    images = scan_images(image_folder)
+
+    for file_path in images:
+        img_hash = get_image_hash(file_path)
+        if img_hash is None:
+            continue
+
+        exif_date = get_exif_datetime(file_path)
+
+        # Пошук подібних хешів
+        for existing_hash in hashes.keys():
+            if abs(img_hash - existing_hash) <= SIMILARITY_THRESHOLD:
+                original_file = hashes[existing_hash]
+                original_exif_date = get_exif_datetime(original_file)
+
+                if exif_date and original_exif_date and exif_date != original_exif_date:
+                    print(f"❎ Час зйомки відрізняється: {os.path.basename(file_path)} ({exif_date}) != {os.path.basename(original_file)} ({original_exif_date}), не вважається дублікатом.")
+                    continue
+
+                if existing_hash not in duplicate_groups:
+                    duplicate_groups[existing_hash] = {original_file}
+                duplicate_groups[existing_hash].add(file_path)
+                break
+        else:
+            hashes[img_hash] = file_path
+
+    # Обробка дублікатів
+    os.makedirs(BACKUP_FOLDER, exist_ok=True)
+    for img_hash, files in duplicate_groups.items():
+        original_file = min(files, key=lambda f: (get_exif_datetime(f) or "9999:99:99", os.path.getctime(f)))
+        print(f"✅ Залишаємо оригінал: {os.path.basename(original_file)}")
+
+        for file in files:
+            if file != original_file:
+                backup_path = os.path.join(BACKUP_FOLDER, os.path.basename(file))
+                try:
+                    shutil.move(file, backup_path)
+                    print(f"♻️ Дублікат переміщено: {os.path.basename(file)} -> {backup_path}")
+                except Exception as e:
+                    print(f"❌ Помилка переміщення {os.path.basename(file)}: {e}")
+
+def is_corrupted(image_path):
+    """Перевіряє, чи є зображення пошкодженим"""
+    try:
+        with Image.open(image_path) as img:
+            img.verify()  # Перевіряє, чи не пошкоджене зображення
+            if img.width == 0 or img.height == 0:
+                return True  # Некоректні розміри
+        return False
+    except Exception:
+        return True  # Не вдалося відкрити файл
+
+def is_damaged(image_path):
+    """Перевіряє, чи є зображення візуально пошкодженим."""
+    try:
+        with Image.open(image_path) as img:
+            img = img.convert("L")  # Конвертуємо в градації сірого
+            img_array = np.array(img)
+
+            # 1. Аналіз унікальних кольорів (якщо зображення майже повністю одного кольору)
+            unique_colors, counts = np.unique(img_array.reshape(-1), return_counts=True)
+            most_common = np.max(counts) / np.sum(counts)
+            if most_common > 0.8:  # Якщо 80% одного кольору, підозріле
+                print(f"⚠️ {os.path.basename(image_path)} - підозріле (занадто багато одного кольору)")
+
+                # 2. Перевірка контрасту (чи є в зображенні зміни кольору)
+                contrast = img_array.std()  # Дисперсія яскравості
+                if contrast > 10:  # Якщо є контраст, то це, ймовірно, текст
+                    print(f"✅ {os.path.basename(image_path)} - контраст нормальний (ймовірно, текст)")
+                    return False  # НЕ є пошкодженим
+
+                # 3. Перевірка наявності тексту за допомогою OpenCV
+                edged = cv2.Canny(img_array, 30, 150)  # Виявлення контурів
+                edge_density = np.sum(edged > 0) / img_array.size  # Щільність контурів
+                if edge_density > 0.01:  # Якщо є контури, зображення містить текст/деталі
+                    print(f"✅ {os.path.basename(image_path)} - містить текст/контури")
+                    return False
+
+                return True  # Якщо і кольори, і контраст, і контури відсутні – ймовірно, битий файл
+
+        return False
+    except (UnidentifiedImageError, OSError):
+        print(f"❌ {os.path.basename(image_path)} не вдалося відкрити (битий або нерозпізнаний файл)")
+        return True
+    except Exception as e:
+        print(f"❌ Помилка обробки {os.path.basename(image_path)}: {e}")
+        return True
+
+def check_images(image_folder):
+    """Шукає пошкоджені або візуально зіпсовані зображення та переміщує їх у відповідні папки."""
+    os.makedirs(corrupted_folder, exist_ok=True)
+    os.makedirs(damaged_folder, exist_ok=True)
+
+    for filename in os.listdir(image_folder):
+        file_path = os.path.join(image_folder, filename)
+        if not os.path.isfile(file_path) or os.path.splitext(filename)[1].lower() not in ALLOWED_EXTENSIONS:
+            continue  # Пропускаємо, якщо не файл або формат не підтримується
+
+        if is_corrupted(file_path):
+            corrupted_path = os.path.join(corrupted_folder, filename)
+            shutil.move(file_path, corrupted_path)
+            print(f"⚠️ Пошкоджене фото переміщено: {filename} -> {corrupted_folder} (битий файл)")
+        elif is_damaged(file_path):
+            damaged_path = os.path.join(damaged_folder, filename)
+            shutil.move(file_path, damaged_path)
+            print(f"⚠️ Візуально зіпсоване фото переміщено: {filename} -> {damaged_folder} (артефакти/занадто багато одного кольору)")
+
+
+if __name__ == "__main__":
+    folder_path = os.getcwd()
+    print(f"📂 Початок обробки: {folder_path}")
+    check_images(folder_path)  # Додаємо пошук пошкоджених фото
+    find_duplicates(folder_path)
+    print("✅ Обробка завершена. Дублікатні файли переміщено в 'duplicates_backup'.")
