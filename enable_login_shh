@@ -1,0 +1,44 @@
+#!/bin/bash
+
+CONFIG_FILE="/etc/ssh/sshd_config.d/99_login.conf"
+TEMP_FILE=$(mktemp)
+
+changed=0
+
+# Функція для оновлення або додавання опції в конфіг
+update_option() {
+  local option=$1
+  local value=$2
+
+  if grep -q "^${option} ${value}$" "$CONFIG_FILE" 2>/dev/null; then
+    # Потрібний рядок вже є, нічого не робимо
+    return
+  fi
+
+  if grep -q "^${option} " "$CONFIG_FILE" 2>/dev/null; then
+    # Змінюємо існуюче значення
+    sed "s/^${option} .*/${option} ${value}/" "$CONFIG_FILE" > "$TEMP_FILE" && mv "$TEMP_FILE" "$CONFIG_FILE"
+  else
+    # Додаємо рядок
+    echo "${option} ${value}" >> "$CONFIG_FILE"
+  fi
+
+  changed=1
+}
+
+# Якщо файлу немає - створюємо
+if [ ! -f "$CONFIG_FILE" ]; then
+  touch "$CONFIG_FILE"
+fi
+
+update_option "PermitRootLogin" "yes"
+update_option "PasswordAuthentication" "yes"
+
+if [ $changed -eq 1 ]; then
+  echo "Конфіг змінено, перезапускаємо sshd..."
+  systemctl restart sshd
+else
+  echo "Конфіг уже містить потрібні налаштування, перезапуск не потрібен."
+fi
+
+rm -f "$TEMP_FILE"
