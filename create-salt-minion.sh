@@ -31,13 +31,9 @@ function update_script() {
   $STD apt-get update
   $STD apt-get -y upgrade
   msg_ok "Updated ${APP} LXC"
-  exit
-}
-
-post_create() {
+  
   msg_info "Installing Salt Minion inside container..."
   $LXC exec bash -c "
-    apt-get update &&
     apt-get install -y curl gnupg &&
     mkdir -p /etc/apt/keyrings &&
     curl -fsSL https://packages.broadcom.com/artifactory/api/security/keypair/SaltProjectKey/public | tee /etc/apt/keyrings/salt-archive-keyring.pgp &&
@@ -48,6 +44,8 @@ post_create() {
     systemctl start salt-minion
   "
   msg_ok "Salt Minion installed and started."
+  
+  exit
 }
 
 start
