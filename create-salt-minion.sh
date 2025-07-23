@@ -5,7 +5,7 @@ source <(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxV
 
 ## Використання: bash -c "$(curl -fsSL https://raw.githubusercontent.com/Raven-98/helper-scripts/refs/heads/main/create-salt-minion.sh)"
 
-APP="Salt Minion"
+APP="Ubuntu"
 var_tags="${var_tags:-os}"
 var_cpu="${var_cpu:-1}"
 var_ram="${var_ram:-512}"
@@ -13,7 +13,6 @@ var_disk="${var_disk:-4}"
 var_os="${var_os:-ubuntu}"
 var_version="${var_version:-24.04}"
 var_unprivileged="${var_unprivileged:-1}"
-var_install="ubuntu-install"
 
 header_info "$APP"
 variables
