@@ -34,7 +34,7 @@ function update_script() {
   exit
 }
 
-function post_create() {
+post_create() {
   msg_info "Installing Salt Minion inside container..."
   $LXC exec bash -c "
     apt-get update &&
