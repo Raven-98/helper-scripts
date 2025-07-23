@@ -3,6 +3,8 @@ source <(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxV
 # Copyright (c) 2025
 # Author: Raven-98
 
+## Використання: bash -c "$(curl -fsSL https://raw.githubusercontent.com/Raven-98/helper-scripts/refs/heads/main/create-salt-minion.sh)"
+
 APP="Salt Minion"
 var_tags="${var_tags:-os}"
 var_cpu="${var_cpu:-1}"
